@@ -1,0 +1,41 @@
+menu "CYD music player"
+config MUSIC_WIFI_SSID
+    string "WiFi SSID"
+    default ""
+config MUSIC_WIFI_PASSWORD
+    string "WiFi password"
+    default ""
+config MUSIC_STREAM_URL
+    string "Fallback HTTP audio URL"
+    default ""
+config MUSIC_I2S_BCLK
+    int "MAX98357A BCLK GPIO"
+    range 0 33
+    default 22
+    help
+        CYD available choices: 4, 16, 17, 22, 26, 27. Each I2S signal must
+        use a different pin. GPIO4/16/17 need repurposing the RGB LED.
+config MUSIC_I2S_WS
+    int "MAX98357A LRC / WS GPIO"
+    range 0 33
+    default 27
+config MUSIC_I2S_DOUT
+    int "MAX98357A DIN GPIO (ESP32 data output)"
+    range 0 33
+    default 26
+    help
+        GPIO26 requires access before the onboard amplifier, not at SPEAK.
+        See README for the CYD wiring restrictions.
+config MUSIC_TOUCH_X_MIN
+    int "Touch X raw minimum"
+    default 300
+config MUSIC_TOUCH_X_MAX
+    int "Touch X raw maximum"
+    default 3900
+config MUSIC_TOUCH_Y_MIN
+    int "Touch Y raw minimum"
+    default 200
+config MUSIC_TOUCH_Y_MAX
+    int "Touch Y raw maximum"
+    default 3700
+endmenu

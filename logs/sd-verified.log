@@ -1,0 +1,21 @@
+I (361) app_init: Project name:     cyd_music
+I (811) sdspi_transaction: cmd=52, R1 response: command not supported
+I (853) sdspi_transaction: cmd=5, R1 response: command not supported
+Name: SD
+Type: SDSC
+Speed: 10.00 MHz (limit: 10.00 MHz)
+Size: 1876MB
+CSD: ver=1, sector_size=512, capacity=3842048 read_bl_len=10
+SSR: bus_width=1
+I (881) sd: Root entry: [System Volume Information] type=2
+I (884) sd: Root entry: [co_anh_o_day_roi.mp3] type=1
+I (889) sd: Root entry: [co_anh_o_day_roi.lrc] type=1
+W (894) sd: /music missing; scanning card root instead
+I (898) sd: Music entry: [System Volume Information] type=2
+I (904) sd: Skipped: unsupported extension
+I (908) sd: Music entry: [co_anh_o_day_roi.mp3] type=1
+I (913) sd: Accepted: 5142161 bytes
+I (916) sd: Music entry: [co_anh_o_day_roi.lrc] type=1
+I (920) sd: Skipped: unsupported extension
+I (925) sd: Found 1 tracks/streams
+I (10431) memory: heap free=133780, minimum=132816, largest internal=110592 bytes
