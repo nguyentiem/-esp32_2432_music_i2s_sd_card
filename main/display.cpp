@@ -7,6 +7,7 @@
 #include "esp_timer.h"
 #include "font.h"
 #include "player.h"
+#include "../refer/output.h"
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -15,6 +16,32 @@ namespace {
 spi_device_handle_t lcd;
 uint8_t bitmap[240][40];
 uint16_t *stripe;
+constexpr uint16_t kMint = 0x3eb4; // #3ED6A5 in RGB565
+constexpr uint16_t kCard = 0x10c5;
+constexpr uint16_t kSecondary = 0x9495;
+static_assert(sizeof(my_image) == 240 * 320 * 2, "Expected 240x320 RGB565 background");
+
+uint16_t blend(uint16_t base, uint16_t overlay, unsigned opacity) {
+  const unsigned inv = 255 - opacity;
+  const unsigned r = (((base >> 11) & 31) * inv + ((overlay >> 11) & 31) * opacity) / 255;
+  const unsigned g = (((base >> 5) & 63) * inv + ((overlay >> 5) & 63) * opacity) / 255;
+  const unsigned b = ((base & 31) * inv + (overlay & 31) * opacity) / 255;
+  return (r << 11) | (g << 5) | b;
+}
+bool rounded(int x, int y, int left, int top, int w, int h, int radius) {
+  if (x < left || x >= left + w || y < top || y >= top + h)
+    return false;
+  const int dx = x - std::clamp(x, left + radius, left + w - radius - 1);
+  const int dy = y - std::clamp(y, top + radius, top + h - radius - 1);
+  return dx * dx + dy * dy <= radius * radius;
+}
+uint16_t background(int x, int y) {
+  // Cover the landscape screen without stretching the portrait reference image.
+  // Crop 70 rows from each end, then scale the central 240x180 region to 320x240.
+  const int offset = ((70 + y * 3 / 4) * 240 + x * 3 / 4) * 2;
+  const uint16_t color = my_image[offset] | (uint16_t(my_image[offset + 1]) << 8);
+  return blend(color, 0, 153); // Reference's 60% dark overlay.
+}
 void tx(const void *data, size_t bytes, bool isData) {
   if (!bytes)
     return;
@@ -154,23 +181,24 @@ void displayInit() {
 }
 void displayDraw(const View &v) {
   memset(bitmap, 0, sizeof(bitmap));
-  text("CYD MUSIC / ESP-IDF", 12, 5, 296);
   const char *title = strrchr(v.title, '/');
-  text(title ? title + 1 : v.title, 12, 31, 296, 2);
-  text(v.status, 12, 76, 296);
-  text(v.lyric, 12, 100, 296, 3);
-  char status[64];
+  text(title ? title + 1 : v.title, 12, 4, 296, 2);
+  text(v.status, 12, 46, 296);
+  rect(12, 72, 296, 4, true);
+  char elapsed[16], duration[16], volume[24];
+  snprintf(elapsed, sizeof(elapsed), "%02lu:%02lu", (unsigned long)(v.ms / 60000),
+           (unsigned long)(v.ms / 1000 % 60));
   if (v.total)
-    snprintf(status, sizeof(status), "%02lu:%02lu / %02lu:%02lu   Vol %d%%",
-             (unsigned long)(v.ms / 60000), (unsigned long)(v.ms / 1000 % 60),
-             (unsigned long)(v.total / 60000), (unsigned long)(v.total / 1000 % 60), v.volume);
+    snprintf(duration, sizeof(duration), "%02lu:%02lu", (unsigned long)(v.total / 60000),
+             (unsigned long)(v.total / 1000 % 60));
   else
-    snprintf(status, sizeof(status), "%02lu:%02lu   Vol %d%%", (unsigned long)(v.ms / 60000),
-             (unsigned long)(v.ms / 1000 % 60), v.volume);
-  text(status, 12, 164, 296);
-  rect(12, 187, 296, 6);
-  if (v.total)
-    rect(13, 188, std::min<uint64_t>(294, uint64_t(v.ms) * 294 / v.total), 4, true);
+    snprintf(duration, sizeof(duration), "--:--");
+  text(elapsed, 12, 78, 100);
+  text(duration, 252, 78, 56);
+  text(v.lyric[0] ? v.lyric : "Chưa có lời bài hát", 22, 108, 276, 3);
+  snprintf(volume, sizeof(volume), "Vol %d%%", std::clamp(v.volume, 0, 100));
+  text(volume, 12, 174, 110);
+  rect(130, 182, 178, 5, true);
   // Draw geometric icons directly: no dependency on font symbol coverage.
   const auto triangle = [](int cx, int cy, bool right) {
     for (int dx = 0; dx < 15; ++dx) {
@@ -180,7 +208,7 @@ void displayDraw(const View &v) {
   };
   for (int i = 0; i < 5; ++i) {
     const int cx = i * 64 + 32, cy = 219;
-    rect(i * 64 + 2, 200, 60, 38);
+
     if (i == 0 || i == 2) {
       const bool next = i == 2;
       triangle(cx, cy, next);
@@ -210,9 +238,27 @@ void displayDraw(const View &v) {
     command(0x2c);
     for (int j = 0; j < 20; ++j)
       for (int x = 0; x < 320; ++x) {
-        uint16_t color = (bitmap[y + j][x / 8] & (0x80 >> (x % 8)))
-                             ? ((y + j < 26 || y + j >= 187) ? 0x07ff : 0xffff)
-                             : 0;
+        const int py = y + j;
+        uint16_t color = background(x, py);
+        if (rounded(x, py, 12, 102, 296, 68, 12))
+          color = blend(color, kCard, 180);
+        const int button = x / 64;
+        const bool inButton = rounded(x, py, button * 64 + 2, 200, 60, 38, 18);
+        if (inButton)
+          color = button == 1 ? kMint : blend(color, kCard, 225);
+        if (bitmap[py][x / 8] & (0x80 >> (x % 8))) {
+          color = 0xffff;
+          if ((py >= 46 && py < 66) || (py >= 78 && py < 98) ||
+              (py >= 174 && py < 194))
+            color = kSecondary;
+          if (py >= 72 && py < 76)
+            color = v.total && x - 12 < int(std::min<uint64_t>(296, uint64_t(v.ms) * 296 / v.total))
+                        ? kMint : kCard;
+          if (py >= 182 && py < 187 && x >= 130)
+            color = x - 130 < std::clamp(v.volume, 0, 100) * 178 / 100 ? kMint : kCard;
+          if (py >= 200 && button == 1)
+            color = kCard;
+        }
         stripe[j * 320 + x] = __builtin_bswap16(color);
       }
     tx(stripe, 320 * 20 * 2, true);

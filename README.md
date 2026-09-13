@@ -207,6 +207,11 @@ pause/resume, đổi bài; thử MP3 và HTTP; rút SD/ngắt WiFi giữa bài v
 - `main/source.*`: producer SD/HTTP và stream buffer, hủy/thu hồi task.
 - `main/audio.cpp`: WAV/MP3, I2S DMA cho MAX98357A, state và đồng bộ lời.
 - `main/display.cpp`: ST7789 SPI, font bitmap, XPT2046 software SPI.
+- `refer/music_player_ui.c`: mẫu giao diện LVGL để tham khảo. Firmware vẽ trực tiếp
+  theo tông navy/mint, khung lời bo góc và nút play nổi bật trên màn ngang 320×240.
+- `refer/output.h`: ảnh nền RGB565 tạm, nhúng trong flash; crop giữa ảnh dọc
+  240×320 để phủ màn ngang đúng tỷ lệ, thêm lớp tối 60% giúp đọc chữ. Thanh âm lượng
+  hiển thị mức hiện tại; vẫn điều chỉnh bằng hai nút VOL−/VOL+ bên dưới.
 - `include/lyrics.h`, `include/wav.h`: parser độc lập phần cứng.
 - `third_party/`: minimp3 được cố định commit và giấy phép font.
 - `legacy/arduino/`: bản mã nguồn Arduino trước khi chuyển đổi, dùng để đối chiếu.
