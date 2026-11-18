@@ -122,23 +122,30 @@ void scanSD() {
   }
   ESP_LOGI("sd", "Found %u tracks/streams", unsigned(tracks.size()));
 }
-void wifiEvent(void *, esp_event_base_t base, int32_t id, void *) {
-  if (base == WIFI_EVENT && (id == WIFI_EVENT_STA_START || id == WIFI_EVENT_STA_DISCONNECTED))
-    esp_wifi_connect();
-  if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP)
+void wifiEvent(void *, esp_event_base_t base, int32_t id, void *data) {
+  if (base == WIFI_EVENT && (id == WIFI_EVENT_STA_START || id == WIFI_EVENT_STA_DISCONNECTED)) {
+    if (viewLock && xSemaphoreTake(viewLock, pdMS_TO_TICKS(50)) == pdTRUE) {
+      view.wifiConnected = false;
+      snprintf(view.wifiIp, sizeof(view.wifiIp), "0.0.0.0");
+      xSemaphoreGive(viewLock);
+    }
+    if (!servicesIsWifiScanActive()) {
+      wifi_config_t cfg = {};
+      if (esp_wifi_get_config(WIFI_IF_STA, &cfg) == ESP_OK && cfg.sta.ssid[0] != '\0')
+        esp_wifi_connect();
+    }
+  }
+  if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
+    auto *event = static_cast<ip_event_got_ip_t *>(data);
+    if (viewLock && xSemaphoreTake(viewLock, pdMS_TO_TICKS(50)) == pdTRUE) {
+      view.wifiConnected = true;
+      snprintf(view.wifiIp, sizeof(view.wifiIp), IPSTR, IP2STR(&event->ip_info.ip));
+      xSemaphoreGive(viewLock);
+    }
     ESP_LOGI("wifi", "Connected");
+  }
 }
 void startWiFi() {
-  if (!strlen(WIFI_SSID))
-    return;
-  wifi_config_t settings = {};
-  if (strlen(WIFI_SSID) > sizeof(settings.sta.ssid) ||
-      strlen(WIFI_PASSWORD) > sizeof(settings.sta.password)) {
-    ESP_LOGE("wifi", "SSID/password too long");
-    return;
-  }
-  memcpy(settings.sta.ssid, WIFI_SSID, strlen(WIFI_SSID));
-  memcpy(settings.sta.password, WIFI_PASSWORD, strlen(WIFI_PASSWORD));
   ESP_ERROR_CHECK(esp_netif_init());
   ESP_ERROR_CHECK(esp_event_loop_create_default());
   ESP_ERROR_CHECK(esp_netif_create_default_wifi_sta() ? ESP_OK : ESP_ERR_NO_MEM);
@@ -146,13 +153,63 @@ void startWiFi() {
   ESP_ERROR_CHECK(esp_wifi_init(&init));
   ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, wifiEvent, nullptr));
   ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, wifiEvent, nullptr));
-  ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
+  ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_FLASH));
   ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-  ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &settings));
+  if (strlen(WIFI_SSID) > 0 && strlen(WIFI_SSID) <= 32 && strlen(WIFI_PASSWORD) <= 64) {
+    wifi_config_t settings = {};
+    memcpy(settings.sta.ssid, WIFI_SSID, strlen(WIFI_SSID));
+    memcpy(settings.sta.password, WIFI_PASSWORD, strlen(WIFI_PASSWORD));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &settings));
+  }
   ESP_ERROR_CHECK(esp_wifi_start());
   ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
 }
+void uiTask(void *) {
+  int64_t lastDraw = 0;
+  uint32_t lastScanSeq = servicesGetWifiScanSeq();
+  View previous;
+  for (;;) {
+    pollTouch();
+    if (esp_timer_get_time() - lastDraw > 100000) {
+      View copy;
+      xSemaphoreTake(viewLock, portMAX_DELAY);
+      view.uiTick = uint32_t(esp_timer_get_time() / 1000000ULL);
+      copy = view;
+      xSemaphoreGive(viewLock);
+      const uint32_t scanSeq = servicesGetWifiScanSeq();
+      if (copy.screen != previous.screen) {
+        if (copy.screen == Screen::Player) {
+          Command cmd = Command::Resume;
+          xQueueSend(commands, &cmd, 0);
+        } else if (previous.screen == Screen::Player) {
+          Command cmd = Command::Pause;
+          xQueueSend(commands, &cmd, 0);
+        }
+      }
+      if (!lastDraw || copy.screen != previous.screen || copy.standbyMode != previous.standbyMode ||
+          copy.language != previous.language || copy.wifiConnected != previous.wifiConnected ||
+          copy.uiDirty != previous.uiDirty || scanSeq != lastScanSeq ||
+          (copy.screen == Screen::Standby && copy.uiTick != previous.uiTick) ||
+          strcmp(copy.title, previous.title) || strcmp(copy.status, previous.status) ||
+          strcmp(copy.lyric, previous.lyric) || copy.ms / 1000 != previous.ms / 1000 ||
+          copy.total != previous.total || copy.volume != previous.volume ||
+          copy.playing != previous.playing) {
+        if (copy.screen != previous.screen)
+          ESP_LOGI("ui", "Screen changed: %d -> %d", int(previous.screen), int(copy.screen));
+        displayDraw(copy);
+        lastScanSeq = scanSeq;
+      }
+      previous = copy;
+      lastDraw = esp_timer_get_time();
+    }
+    vTaskDelay(pdMS_TO_TICKS(15));
+  }
+}
 } // namespace
+void requestWifiReconnect() {
+  esp_wifi_disconnect();
+  esp_wifi_connect();
+}
 extern "C" void app_main() {
   esp_err_t nvs = nvs_flash_init();
   if (nvs == ESP_ERR_NVS_NO_FREE_PAGES || nvs == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -163,11 +220,13 @@ extern "C" void app_main() {
   commands = xQueueCreate(8, sizeof(Command));
   viewLock = xSemaphoreCreateMutex();
   ESP_ERROR_CHECK(commands && viewLock ? ESP_OK : ESP_ERR_NO_MEM);
+  servicesLoadSettings(view.standbyMode, view.language);
   displayInit();
   scanSD();
   if (!strncmp(STREAM_URL, "http://", 7) && tracks.size() < MAX_TRACKS)
     tracks.emplace_back(STREAM_URL);
   startWiFi();
+  servicesStartWeatherTask();
   ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0, 256, 0, 0, nullptr, 0));
   ESP_ERROR_CHECK(uart_set_baudrate(UART_NUM_0, 115200));
   if (xTaskCreatePinnedToCore(playerTask, "player", 24576, nullptr, 4, nullptr, 1) != pdPASS) {
@@ -178,9 +237,8 @@ extern "C" void app_main() {
   }
   ESP_LOGI("main", "p=play/pause, n=next, b=previous, +/- volume; free heap=%lu",
            (unsigned long)esp_get_free_heap_size());
-  int64_t lastDraw = 0;
+  xTaskCreatePinnedToCore(uiTask, "ui", 8192, nullptr, 5, nullptr, 0);
   int64_t lastMemoryReport = 0;
-  View previous;
   for (;;) {
     uint8_t c;
     while (uart_read_bytes(UART_NUM_0, &c, 1, 0) == 1) {
@@ -190,26 +248,12 @@ extern "C" void app_main() {
         xQueueSend(commands, &cmd, 0);
       }
     }
-    pollTouch();
     if (esp_timer_get_time() - lastMemoryReport >= 10000000) {
       ESP_LOGI("memory", "heap free=%u, minimum=%u, largest internal=%u bytes",
                unsigned(esp_get_free_heap_size()), unsigned(esp_get_minimum_free_heap_size()),
                unsigned(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)));
       lastMemoryReport = esp_timer_get_time();
     }
-    if (esp_timer_get_time() - lastDraw > 250000) {
-      View copy;
-      xSemaphoreTake(viewLock, portMAX_DELAY);
-      copy = view;
-      xSemaphoreGive(viewLock);
-      if (!lastDraw || strcmp(copy.title, previous.title) || strcmp(copy.status, previous.status) ||
-          strcmp(copy.lyric, previous.lyric) || copy.ms / 1000 != previous.ms / 1000 ||
-          copy.total != previous.total || copy.volume != previous.volume ||
-          copy.playing != previous.playing)
-        displayDraw(copy);
-      previous = copy;
-      lastDraw = esp_timer_get_time();
-    }
-    vTaskDelay(pdMS_TO_TICKS(10));
+    vTaskDelay(pdMS_TO_TICKS(50));
   }
 }

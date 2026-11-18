@@ -63,7 +63,13 @@ class Player {
     if (line >= 0)
       snprintf(copy.lyric, sizeof(copy.lyric), "%s", lyrics.lines[line].text.c_str());
     xSemaphoreTake(viewLock, portMAX_DELAY);
-    view = copy;
+    memcpy(view.title, copy.title, sizeof(view.title));
+    memcpy(view.lyric, copy.lyric, sizeof(view.lyric));
+    memcpy(view.status, copy.status, sizeof(view.status));
+    view.ms = copy.ms;
+    view.total = copy.total;
+    view.volume = copy.volume;
+    view.playing = copy.playing;
     xSemaphoreGive(viewLock);
     lastPublish = now;
   }
@@ -108,6 +114,18 @@ class Player {
           break;
         case Command::Louder:
           volume = std::min(100, volume + 5);
+          break;
+        case Command::Pause:
+          if (playing)
+            paused = true;
+          break;
+        case Command::Resume:
+          if (playing)
+            paused = false;
+          else if (!tracks.empty()) {
+            nextIndex = index;
+            interrupted = true;
+          }
           break;
         }
       }
@@ -298,7 +316,8 @@ public:
       publish(true);
       return;
     }
-    bool load = !tracks.empty();
+    bool load = false;
+    paused = true;
     for (;;) {
       if (load) {
         index = nextIndex;
@@ -338,8 +357,7 @@ public:
         interrupted = false;
         publish(true);
       } else {
-        if (tracks.empty())
-          status = "No tracks";
+        status = tracks.empty() ? "No tracks" : "Paused";
         service();
         if (interrupted) {
           interrupted = false;

@@ -1,0 +1,29 @@
+<screen>
+  <view name="scr_idle_clock" width="320" height="240" scrollable="false">
+    <style name="st_screen"/>
+
+    <lv_label name="lbl_city" x="12" y="6" text="Hà Nội" style_text_color="#c_dim" style_text_font="lv_font_montserrat_12"/>
+    <lv_label name="lbl_wifi" align="top_right" x="-12" y="6" text="&#xF1EB;" style_text_color="#c_dim"/>
+
+    <lv_label name="lbl_time" x="14" y="34" text="09:41" style_text_font="lv_font_montserrat_48"/>
+    <lv_label name="lbl_sec"  x="170" y="62" text="27" style_text_color="#c_dim" style_text_font="lv_font_montserrat_16"/>
+
+    <lv_label name="lbl_date"  x="14" y="104" text="Thứ ba, 17/11/2026" style_text_font="lv_font_montserrat_14"/>
+    <lv_label name="lbl_lunar" x="14" y="126" text="Âm lịch 8/10 · Bính Ngọ" style_text_color="#c_amber" style_text_font="lv_font_montserrat_14"/>
+
+    <lv_obj name="card_weather" x="196" y="34" width="112" height="118">
+      <style name="st_card"/>
+      <lv_label name="lbl_w_icon" align="top_mid" y="8" text="&#xF0C2;" style_text_color="#c_blue" style_text_font="lv_font_montserrat_28"/>
+      <lv_label name="lbl_w_temp" align="top_mid" y="42" text="24°C" style_text_font="lv_font_montserrat_24"/>
+      <lv_label name="lbl_w_desc" align="top_mid" y="72" text="Nhiều mây" style_text_color="#c_dim" style_text_font="lv_font_montserrat_12"/>
+      <lv_label name="lbl_w_hl"   align="top_mid" y="92" text="27° / 21° · 68%" style_text_color="#c_dim" style_text_font="lv_font_montserrat_12"/>
+    </lv_obj>
+
+    <lv_obj name="swipe_hint" align="bottom_mid" y="-5" width="56" height="3">
+      <style name="st_hint"/>
+    </lv_obj>
+    <lv_obj name="swipe_zone" align="bottom_mid" width="320" height="28" clickable="true">
+      <style name="st_transparent"/>
+    </lv_obj>
+  </view>
+</screen>

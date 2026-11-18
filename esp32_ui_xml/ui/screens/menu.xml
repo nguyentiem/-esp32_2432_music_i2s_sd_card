@@ -1,0 +1,36 @@
+<screen>
+  <view name="scr_menu" width="320" height="240" scrollable="false">
+    <style name="st_screen"/>
+
+    <lv_label name="lbl_clock" x="12" y="6" text="09:41" style_text_color="#c_dim" style_text_font="lv_font_montserrat_12"/>
+    <lv_label align="top_right" x="-12" y="6" text="&#xF1EB;" style_text_color="#c_dim"/>
+
+    <lv_obj name="grid" x="0" y="34" width="320" height="170" flex_flow="row_wrap"
+            style_pad_all="12" style_pad_column="16" style_pad_row="16"
+            style_bg_opa="0" style_border_width="0" flex_main_place="start" scrollable="false">
+
+      <lv_obj name="app_settings" width="68" height="82" clickable="true"
+              style_bg_opa="0" style_border_width="0" style_pad_all="0">
+        <lv_obj name="ic_settings" align="top_mid" width="56" height="56" style_bg_color="#c_gray">
+          <style name="st_icon"/>
+          <lv_label align="center" text="&#xF013;" style_text_color="#ffffff" style_text_font="lv_font_montserrat_28"/>
+        </lv_obj>
+        <lv_label align="bottom_mid" text="Cài đặt" style_text_font="lv_font_montserrat_12"/>
+      </lv_obj>
+
+      <lv_obj name="app_music" width="68" height="82" clickable="true"
+              style_bg_opa="0" style_border_width="0" style_pad_all="0">
+        <lv_obj name="ic_music" align="top_mid" width="56" height="56" style_bg_color="#c_red">
+          <style name="st_icon"/>
+          <lv_label align="center" text="&#xF001;" style_text_color="#ffffff" style_text_font="lv_font_montserrat_28"/>
+        </lv_obj>
+        <lv_label align="bottom_mid" text="Nhạc" style_text_font="lv_font_montserrat_12"/>
+      </lv_obj>
+    </lv_obj>
+
+    <lv_obj name="page_dot_0" x="147" y="214" width="6" height="6" style_radius="3" style_bg_color="#c_text" style_bg_opa="255" style_border_width="0"/>
+    <lv_obj name="page_dot_1" x="161" y="214" width="6" height="6" style_radius="3" style_bg_color="#3a4560" style_bg_opa="255" style_border_width="0"/>
+
+    <lv_obj align="bottom_mid" y="-5" width="56" height="3"><style name="st_hint"/></lv_obj>
+  </view>
+</screen>

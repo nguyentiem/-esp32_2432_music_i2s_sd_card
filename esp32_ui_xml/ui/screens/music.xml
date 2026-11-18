@@ -1,0 +1,38 @@
+<screen>
+  <view name="scr_music" width="320" height="240" scrollable="false">
+    <style name="st_screen"/>
+
+    <lv_obj name="btn_back" x="0" y="0" width="120" height="30" clickable="true" style_bg_opa="0" style_border_width="0">
+      <lv_label x="12" y="7" text="&#xF053;  Nhạc" style_text_font="lv_font_montserrat_14"/>
+    </lv_obj>
+    <lv_label name="lbl_vol" align="top_right" x="-12" y="7" text="&#xF028; 70%" style_text_color="#c_dim" style_text_font="lv_font_montserrat_12"/>
+
+    <lv_obj name="cover" x="14" y="34" width="112" height="112" style_bg_color="0x231a38" style_bg_opa="255" style_radius="10" style_border_width="0">
+      <lv_image name="img_cover" align="center" width="112" height="112"/>
+      <lv_label name="lbl_cover_ph" align="center" text="&#xF001;" style_text_color="#c_violet" style_text_font="lv_font_montserrat_28"/>
+    </lv_obj>
+
+    <lv_obj name="info" x="138" y="34" width="172" height="112" style_bg_opa="0" style_border_width="0" style_pad_all="0">
+      <lv_label name="lbl_title"  x="0" y="0"  width="172" long_mode="scroll_circular" text="Tên bài hát" style_text_font="lv_font_montserrat_16"/>
+      <lv_label name="lbl_artist" x="0" y="24" width="172" long_mode="dots" text="Ca sĩ" style_text_color="#c_dim" style_text_font="lv_font_montserrat_12"/>
+      <lv_label name="lbl_lyric_prev" x="0" y="52" width="172" long_mode="dots" text="Dòng lời trước" style_text_color="#c_dim" style_text_font="lv_font_montserrat_12"/>
+      <lv_label name="lbl_lyric_cur"  x="0" y="68" width="172" long_mode="scroll_circular" text="Dòng lời đang hát" style_text_color="#c_amber" style_text_font="lv_font_montserrat_14"/>
+      <lv_label name="lbl_lyric_next" x="0" y="90" width="172" long_mode="dots" text="Dòng lời kế tiếp" style_text_color="#c_dim" style_text_font="lv_font_montserrat_12"/>
+    </lv_obj>
+
+    <lv_slider name="sld_progress" x="14" y="156" width="292" height="5" range_min="0" range_max="1000" value="350"
+               style_bg_color:main="#c_line" style_bg_color:indicator="#c_violet" style_bg_opa:knob="0" style_pad_all:knob="0" style_radius="3"/>
+    <lv_label name="lbl_pos" x="14"  y="166" text="1:12" style_text_color="#c_dim" style_text_font="lv_font_montserrat_12"/>
+    <lv_label name="lbl_dur" align="top_right" x="-14" y="166" text="3:25" style_text_color="#c_dim" style_text_font="lv_font_montserrat_12"/>
+
+    <lv_obj name="btn_prev" x="88" y="188" width="40" height="40" clickable="true" style_bg_opa="0" style_border_width="0">
+      <lv_label align="center" text="&#xF048;" style_text_font="lv_font_montserrat_20"/>
+    </lv_obj>
+    <lv_obj name="btn_play" x="140" y="186" width="42" height="42" clickable="true" style_radius="21" style_bg_color="#c_violet" style_bg_opa="255" style_border_width="0">
+      <lv_label name="lbl_play" align="center" text="&#xF04C;" style_text_color="#c_bg" style_text_font="lv_font_montserrat_20"/>
+    </lv_obj>
+    <lv_obj name="btn_next" x="194" y="188" width="40" height="40" clickable="true" style_bg_opa="0" style_border_width="0">
+      <lv_label align="center" text="&#xF051;" style_text_font="lv_font_montserrat_20"/>
+    </lv_obj>
+  </view>
+</screen>

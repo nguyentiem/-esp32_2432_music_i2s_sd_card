@@ -1,0 +1,31 @@
+<globals>
+  <consts>
+    <color name="c_bg"      value="0x070b14"/>
+    <color name="c_card"    value="0x0f1626"/>
+    <color name="c_line"    value="0x1c2740"/>
+    <color name="c_text"    value="0xe8edf7"/>
+    <color name="c_dim"     value="0x7d889f"/>
+    <color name="c_cyan"    value="0x22d3ee"/>
+    <color name="c_violet"  value="0xa78bfa"/>
+    <color name="c_amber"   value="0xe6b450"/>
+    <color name="c_orange"  value="0xf97316"/>
+    <color name="c_green"   value="0x4ade80"/>
+    <color name="c_red"     value="0xe24b4a"/>
+    <color name="c_blue"    value="0x7aa2f7"/>
+    <color name="c_teal"    value="0x5dcaa5"/>
+    <color name="c_gray"    value="0x5b6475"/>
+  </consts>
+
+  <styles>
+    <style name="st_screen" bg_color="#c_bg" bg_opa="255" border_width="0" pad_all="0" radius="0"
+           text_color="#c_text"/>
+    <style name="st_card" bg_color="#c_card" bg_opa="255" border_color="#c_line" border_width="1"
+           radius="8" pad_all="0"/>
+    <style name="st_transparent" bg_opa="0" border_width="0" pad_all="0"/>
+    <style name="st_dim" text_color="#c_dim"/>
+    <style name="st_bar_bg" bg_color="#c_line" bg_opa="255" radius="3" border_width="0"/>
+    <style name="st_row" bg_opa="0" border_width="0" border_side="bottom" pad_all="0"/>
+    <style name="st_icon" radius="14" border_width="0" bg_opa="255"/>
+    <style name="st_hint" bg_color="#3a4560" bg_opa="255" radius="2" border_width="0"/>
+  </styles>
+</globals>

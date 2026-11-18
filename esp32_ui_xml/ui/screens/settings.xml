@@ -1,0 +1,40 @@
+<screen>
+  <view name="scr_settings" width="320" height="240" scrollable="false">
+    <style name="st_screen"/>
+
+    <lv_obj name="hdr" x="0" y="0" width="320" height="34" clickable="false">
+      <style name="st_transparent"/>
+      <lv_obj name="btn_back" x="0" y="0" width="120" height="34" clickable="true" style_bg_opa="0" style_border_width="0">
+        <lv_label x="12" y="9" text="&#xF053;  Cài đặt" style_text_font="lv_font_montserrat_14"/>
+      </lv_obj>
+      <lv_label name="lbl_clock" align="top_right" x="-12" y="10" text="09:41" style_text_color="#c_dim" style_text_font="lv_font_montserrat_12"/>
+    </lv_obj>
+    <lv_obj x="0" y="34" width="320" height="1" style_bg_color="#c_line" style_bg_opa="255" style_border_width="0"/>
+
+    <lv_obj name="row_wifi" x="0" y="35" width="320" height="44" clickable="true"
+            style_bg_opa="0" style_border_width="1" style_border_side="bottom" style_border_color="#c_line" style_pad_all="0">
+      <lv_label x="14" y="13" text="&#xF1EB;" style_text_color="#c_blue"/>
+      <lv_label x="40" y="13" text="Wi-Fi" style_text_font="lv_font_montserrat_14"/>
+      <lv_label name="val_wifi" align="top_right" x="-34" y="15" text="HaNoi_5G" style_text_color="#c_dim" style_text_font="lv_font_montserrat_12"/>
+      <lv_label align="top_right" x="-12" y="13" text="&#xF054;" style_text_color="#c_dim"/>
+    </lv_obj>
+
+    <lv_obj name="row_lang" x="0" y="79" width="320" height="44" clickable="true"
+            style_bg_opa="0" style_border_width="1" style_border_side="bottom" style_border_color="#c_line" style_pad_all="0">
+      <lv_label x="14" y="13" text="&#xF0AC;" style_text_color="#c_teal"/>
+      <lv_label x="40" y="13" text="Ngôn ngữ" style_text_font="lv_font_montserrat_14"/>
+      <lv_label name="val_lang" align="top_right" x="-34" y="15" text="Tiếng Việt" style_text_color="#c_dim" style_text_font="lv_font_montserrat_12"/>
+      <lv_label align="top_right" x="-12" y="13" text="&#xF054;" style_text_color="#c_dim"/>
+    </lv_obj>
+
+    <lv_obj name="row_idle" x="0" y="123" width="320" height="44" clickable="true"
+            style_bg_opa="0" style_border_width="1" style_border_side="bottom" style_border_color="#c_line" style_pad_all="0">
+      <lv_label x="14" y="13" text="&#xF108;" style_text_color="#c_amber"/>
+      <lv_label x="40" y="13" text="Màn hình chờ" style_text_font="lv_font_montserrat_14"/>
+      <lv_label name="val_idle" align="top_right" x="-34" y="15" text="Đồng hồ" style_text_color="#c_dim" style_text_font="lv_font_montserrat_12"/>
+      <lv_label align="top_right" x="-12" y="13" text="&#xF054;" style_text_color="#c_dim"/>
+    </lv_obj>
+
+    <lv_obj align="bottom_mid" y="-5" width="56" height="3"><style name="st_hint"/></lv_obj>
+  </view>
+</screen>
