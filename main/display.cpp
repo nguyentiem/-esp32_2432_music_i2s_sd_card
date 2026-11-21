@@ -7,6 +7,7 @@
 #include "esp_system.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
+#include "esp32/rom/tjpgd.h"
 #include "font.h"
 #include "player.h"
 #include <algorithm>
@@ -14,6 +15,7 @@
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <sys/stat.h>
 
 namespace {
 spi_device_handle_t lcd;
@@ -43,6 +45,22 @@ constexpr uint16_t C_TEAL = rgb565(0x5dcaa5);
 constexpr uint16_t C_GRAY = rgb565(0x5b6475);
 constexpr uint16_t C_HINT = rgb565(0x3a4560);
 constexpr uint16_t C_COVER = rgb565(0x231a38);
+constexpr uint16_t C_P_BG = rgb565(0x0b0f19);
+constexpr uint16_t C_P_DIV = rgb565(0x232a3a);
+constexpr uint16_t C_P_CARD = rgb565(0x131a2b);
+constexpr uint16_t C_P_CARD_BORDER = rgb565(0x25324d);
+constexpr uint16_t C_P_PILL = rgb565(0x172033);
+constexpr uint16_t C_P_PILL_BORDER = rgb565(0x2a3754);
+constexpr uint16_t C_P_BADGE_BG = rgb565(0x102a3b);
+constexpr uint16_t C_P_BADGE_BORDER = rgb565(0x226a80);
+constexpr uint16_t C_P_BTN = rgb565(0x1e293b);
+constexpr uint16_t C_P_BTN_BORDER = rgb565(0x364663);
+constexpr uint16_t C_P_CYAN_LT = rgb565(0x67e8f9);
+constexpr uint16_t C_P_WHITE = rgb565(0xf8fafc);
+constexpr uint16_t C_P_SUB = rgb565(0xb0bac9);
+constexpr uint16_t C_P_LYR_PREV = rgb565(0x6b7485);
+constexpr uint16_t C_P_LYR_NEXT = rgb565(0x9099aa);
+constexpr uint16_t C_P_TRACK = rgb565(0x333c4f);
 
 void tx(const void *data, size_t bytes, bool isData) {
   if (!bytes)
@@ -148,6 +166,42 @@ void drawCardAA(int x, int y, int w, int h, int radius, uint16_t fill, uint16_t 
     fillRoundRectAA(x + 1, y + 1, w - 2, h - 2, std::max(0, radius - 1), fill);
 }
 
+void fillRoundRectGradientAA(int x, int y, int w, int h, int radius, uint16_t cLeft, uint16_t cRight) {
+  if (w <= 0 || h <= 0)
+    return;
+  const int y0 = std::max(stripeY0, y);
+  const int y1 = std::min(stripeY0 + 20, y + h);
+  if (y0 >= y1)
+    return;
+  const int x0 = std::max(0, x);
+  const int x1 = std::min(320, x + w);
+  const int r = std::clamp(radius, 0, std::min(w, h) / 2);
+  const float rf = float(r);
+  const int lx = x + r;
+  const int rx = x + w - 1 - r;
+  const int ty = y + r;
+  const int by = y + h - 1 - r;
+  const int span = std::max(1, w - 1);
+  for (int py = y0; py < y1; ++py) {
+    const int dy = (py < ty) ? (ty - py) : (py > by ? (py - by) : 0);
+    for (int px = x0; px < x1; ++px) {
+      const uint8_t t = static_cast<uint8_t>((px - x) * 255 / span);
+      const uint16_t color = blend565(cLeft, cRight, t);
+      if (dy == 0) {
+        putPixel(px, py, color);
+        continue;
+      }
+      const int dx = (px < lx) ? (lx - px) : (px > rx ? (px - rx) : 0);
+      if (dx == 0) {
+        putPixel(px, py, color);
+      } else {
+        const float dist = std::sqrt(float(dx * dx + dy * dy)) - rf;
+        putPixel(px, py, color, coverageAlpha(dist));
+      }
+    }
+  }
+}
+
 void fillCircleAA(float cx, float cy, float r, uint16_t color) {
   const int y0 = std::max(stripeY0, int(std::floor(cy - r - 1.0f)));
   const int y1 = std::min(stripeY0 + 20, int(std::ceil(cy + r + 1.0f)) + 1);
@@ -163,6 +217,12 @@ void fillCircleAA(float cx, float cy, float r, uint16_t color) {
       putPixel(px, py, color, coverageAlpha(dist));
     }
   }
+}
+
+void drawCircleButtonAA(float cx, float cy, float r, uint16_t fill, uint16_t border) {
+  fillCircleAA(cx, cy, r, border);
+  if (r > 1.2f)
+    fillCircleAA(cx, cy, r - 1.0f, fill);
 }
 
 void drawRingArcAA(float cx, float cy, float rOuter, float rInner, int pct, uint16_t fg, uint16_t bg) {
@@ -485,6 +545,79 @@ void drawTextRight(const char *s, int rightX, int y, uint16_t color, float scale
   drawText(s, rightX - w, y, w + 2, color, 1, scale);
 }
 
+void drawTextWrapped(const char *s, int x, int y, int width, uint16_t color, int lines = 3, float scale = 1.0f) {
+  const int lineH = int(std::round(20.0f * scale));
+  const float spaceAdv = float(findGlyph(' ')->advance) * scale;
+  char lineBuf[192];
+
+  for (int row = 0; row < lines && *s; ++row) {
+    while (*s == ' ')
+      ++s;
+    if (!*s)
+      break;
+
+    size_t outLen = 0;
+    float lineW = 0.0f;
+
+    while (*s) {
+      const char *wStart = s;
+      while (*s && *s != ' ')
+        ++s;
+      const char *wEnd = s;
+
+      float wordW = 0.0f;
+      const char *p = wStart;
+      while (p < wEnd)
+        wordW += float(findGlyph(nextCode(p))->advance) * scale;
+
+      const size_t wBytes = size_t(wEnd - wStart);
+      if (outLen > 0) {
+        if (lineW + spaceAdv + wordW <= float(width) && outLen + 1 + wBytes < sizeof(lineBuf)) {
+          lineBuf[outLen++] = ' ';
+          memcpy(lineBuf + outLen, wStart, wBytes);
+          outLen += wBytes;
+          lineW += spaceAdv + wordW;
+        } else {
+          s = wStart;
+          break;
+        }
+      } else {
+        if (wordW <= float(width) && wBytes < sizeof(lineBuf)) {
+          memcpy(lineBuf, wStart, wBytes);
+          outLen = wBytes;
+          lineW = wordW;
+        } else {
+          // Fallback if a single word is wider than the container
+          const char *cp = wStart;
+          while (cp < wEnd) {
+            const char *prev = cp;
+            const float adv = float(findGlyph(nextCode(cp))->advance) * scale;
+            const size_t cBytes = size_t(cp - prev);
+            if (outLen > 0 && lineW + adv > float(width)) {
+              cp = prev;
+              break;
+            }
+            if (outLen + cBytes >= sizeof(lineBuf))
+              break;
+            memcpy(lineBuf + outLen, prev, cBytes);
+            outLen += cBytes;
+            lineW += adv;
+          }
+          s = cp;
+          break;
+        }
+      }
+
+      while (*s == ' ')
+        ++s;
+    }
+
+    lineBuf[outLen] = '\0';
+    if (outLen > 0)
+      drawText(lineBuf, x, y + row * lineH, width, color, 1, scale);
+  }
+}
+
 // --- Anti-Aliased Vector Icons ---
 void drawWifiIconAA(float cx, float cy, uint16_t color) {
   fillCircleAA(cx, cy + 5.0f, 1.5f, color);
@@ -546,6 +679,16 @@ void drawMonitorIconAA(float cx, float cy, uint16_t color) {
   fillRect(int(cx - 7), int(cy - 5), 14, 8, C_BG);
   fillRect(int(cx - 2), int(cy + 5), 4, 3, color);
   drawLineAA(cx - 5.0f, cy + 8.5f, cx + 5.0f, cy + 8.5f, color, 0.9f);
+}
+
+void drawPhotoIconAA(float cx, float cy, uint16_t color) {
+  fillRoundRectAA(int(cx - 12), int(cy - 9), 24, 18, 3, color);
+  fillRoundRectAA(int(cx - 10), int(cy - 7), 20, 14, 2, C_TEAL);
+  fillCircleAA(cx - 5.0f, cy - 3.0f, 2.2f, color);
+  drawLineAA(cx - 9.0f, cy + 6.0f, cx - 2.0f, cy - 1.0f, color, 1.4f);
+  drawLineAA(cx - 2.0f, cy - 1.0f, cx + 3.0f, cy + 4.0f, color, 1.4f);
+  drawLineAA(cx + 1.0f, cy + 3.0f, cx + 5.5f, cy - 2.5f, color, 1.4f);
+  drawLineAA(cx + 5.5f, cy - 2.5f, cx + 9.5f, cy + 6.0f, color, 1.4f);
 }
 
 void drawWeatherIconAA(float cx, float cy, int code) {
@@ -773,6 +916,10 @@ void drawMenu(const View &v) {
   drawNoteIconAA(142.0f, 74.0f, C_TEXT, 1.0f);
   drawTextCentered(vi ? "Nhạc" : "Music", 142, 108, 76, C_TEXT);
 
+  fillRoundRectAA(198, 46, 56, 56, 14, C_TEAL);
+  drawPhotoIconAA(226.0f, 74.0f, C_TEXT);
+  drawTextCentered(vi ? "Ảnh" : "Photos", 226, 108, 76, C_TEXT);
+
   fillCircleAA(150.0f, 217.0f, 3.0f, C_TEXT);
   fillCircleAA(164.0f, 217.0f, 3.0f, C_HINT);
   drawSwipeHint();
@@ -946,57 +1093,548 @@ void drawStandbyModeSettings(const View &v) {
   drawSwipeHint();
 }
 
+constexpr const char *kWallpaperCache = "/sdcard/.wallpaper.rgb565";
+constexpr const char *kPreviewCache = "/sdcard/.preview.rgb565";
+int galleryPage = 0;
+int photoIdx = 0;
+bool previewReady = false;
+
+bool copyBinaryFile(const char *srcPath, const char *dstPath) {
+  FILE *in = fopen(srcPath, "rb");
+  if (!in)
+    return false;
+  FILE *out = fopen(dstPath, "wb");
+  if (!out) {
+    fclose(in);
+    return false;
+  }
+  uint8_t buf[2048];
+  size_t n = 0;
+  bool ok = true;
+  while ((n = fread(buf, 1, sizeof(buf), in)) > 0) {
+    if (fwrite(buf, 1, n, out) != n) {
+      ok = false;
+      break;
+    }
+  }
+  fclose(in);
+  fclose(out);
+  return ok;
+}
+
+struct JpegDecodeCtx {
+  FILE *in = nullptr;
+  FILE *out = nullptr;
+  uint16_t *band = nullptr;
+  int curBand = -1;
+  int offX = 0;
+  int offY = 0;
+};
+
+void flushJpegBand(JpegDecodeCtx *ctx) {
+  if (ctx->curBand >= 0 && ctx->curBand < 15 && ctx->out && ctx->band) {
+    fseek(ctx->out, long(ctx->curBand) * 16 * 320 * 2, SEEK_SET);
+    fwrite(ctx->band, 2, 320 * 16, ctx->out);
+  }
+}
+
+UINT tjpgdInFunc(JDEC *jd, BYTE *buff, UINT ndata) {
+  auto *ctx = static_cast<JpegDecodeCtx *>(jd->device);
+  if (buff)
+    return UINT(fread(buff, 1, ndata, ctx->in));
+  return fseek(ctx->in, long(ndata), SEEK_CUR) == 0 ? ndata : 0;
+}
+
+UINT tjpgdOutFunc(JDEC *jd, void *bitmap, JRECT *rect) {
+  auto *ctx = static_cast<JpegDecodeCtx *>(jd->device);
+  const auto *src = static_cast<const uint8_t *>(bitmap);
+  const int rw = rect->right - rect->left + 1;
+  for (int y = rect->top; y <= rect->bottom; ++y) {
+    const int dy = y + ctx->offY;
+    if (dy < 0 || dy >= 240)
+      continue;
+    const int bandIdx = dy / 16;
+    if (bandIdx != ctx->curBand) {
+      flushJpegBand(ctx);
+      ctx->curBand = bandIdx;
+      fseek(ctx->out, long(bandIdx) * 16 * 320 * 2, SEEK_SET);
+      if (fread(ctx->band, 2, 320 * 16, ctx->out) != 320 * 16)
+        memset(ctx->band, 0, 320 * 16 * 2);
+    }
+    const int localY = dy % 16;
+    const uint8_t *rowSrc = src + (y - rect->top) * rw * 3;
+    for (int x = rect->left; x <= rect->right; ++x) {
+      const int dx = x + ctx->offX;
+      if (dx < 0 || dx >= 320)
+        continue;
+      const uint8_t *p = rowSrc + (x - rect->left) * 3;
+      ctx->band[localY * 320 + dx] =
+          uint16_t(((p[0] & 0xF8) << 8) | ((p[1] & 0xFC) << 3) | (p[2] >> 3));
+    }
+  }
+  return 1;
+}
+
+bool decodeJpegToRgb565File(const char *srcPath, const char *dstPath) {
+  FILE *in = fopen(srcPath, "rb");
+  if (!in)
+    return false;
+  FILE *out = fopen(dstPath, "wb+");
+  if (!out) {
+    fclose(in);
+    return false;
+  }
+  auto *work = static_cast<uint8_t *>(malloc(3100));
+  auto *band = static_cast<uint16_t *>(calloc(320 * 16, sizeof(uint16_t)));
+  if (!work || !band) {
+    free(work);
+    free(band);
+    fclose(in);
+    fclose(out);
+    return false;
+  }
+  // Pre-fill 320x240 black frame (15 bands of 16 rows)
+  for (int b = 0; b < 15; ++b)
+    fwrite(band, 2, 320 * 16, out);
+
+  JpegDecodeCtx ctx{in, out, band, -1, 0, 0};
+  JDEC jd{};
+  bool ok = false;
+  if (jd_prepare(&jd, tjpgdInFunc, work, 3100, &ctx) == JDR_OK) {
+    BYTE scale = 0;
+    while (scale < 3 && ((jd.width >> scale) > 320 || (jd.height >> scale) > 240))
+      ++scale;
+    const int outW = int(jd.width >> scale);
+    const int outH = int(jd.height >> scale);
+    ctx.offX = (320 - outW) / 2;
+    ctx.offY = (240 - outH) / 2;
+    if (jd_decomp(&jd, tjpgdOutFunc, scale) == JDR_OK) {
+      flushJpegBand(&ctx);
+      ok = true;
+    }
+  }
+  free(work);
+  free(band);
+  fclose(in);
+  fclose(out);
+  return ok;
+}
+
+bool decodeBmpToRgb565File(const char *srcPath, const char *dstPath) {
+  FILE *in = fopen(srcPath, "rb");
+  if (!in)
+    return false;
+  uint8_t hdr[54];
+  if (fread(hdr, 1, 54, in) != 54 || hdr[0] != 'B' || hdr[1] != 'M') {
+    fclose(in);
+    return false;
+  }
+  const uint32_t dataOff = hdr[10] | (hdr[11] << 8) | (hdr[12] << 16) | (hdr[13] << 24);
+  const int32_t bmpW = int32_t(hdr[18] | (hdr[19] << 8) | (hdr[20] << 16) | (hdr[21] << 24));
+  const int32_t rawH = int32_t(hdr[22] | (hdr[23] << 8) | (hdr[24] << 16) | (hdr[25] << 24));
+  const uint16_t bpp = uint16_t(hdr[28] | (hdr[29] << 8));
+  const uint32_t comp = hdr[30] | (hdr[31] << 8) | (hdr[32] << 16) | (hdr[33] << 24);
+  const int32_t bmpH = rawH < 0 ? -rawH : rawH;
+  const bool topDown = rawH < 0;
+  if (bmpW <= 0 || bmpH <= 0 || bpp != 24 || comp != 0) {
+    fclose(in);
+    return false;
+  }
+  FILE *out = fopen(dstPath, "wb");
+  if (!out) {
+    fclose(in);
+    return false;
+  }
+  const uint32_t rowStride = ((uint32_t(bmpW) * 3 + 3) & ~3U);
+  auto *srcRow = static_cast<uint8_t *>(malloc(rowStride));
+  uint16_t dstRow[320];
+  if (!srcRow) {
+    fclose(in);
+    fclose(out);
+    return false;
+  }
+  for (int y = 0; y < 240; ++y) {
+    const int sy = (y * bmpH) / 240;
+    const int fileRow = topDown ? sy : (bmpH - 1 - sy);
+    fseek(in, long(dataOff) + long(fileRow) * long(rowStride), SEEK_SET);
+    if (fread(srcRow, 1, rowStride, in) != rowStride)
+      memset(srcRow, 0, rowStride);
+    for (int x = 0; x < 320; ++x) {
+      const int sx = (x * bmpW) / 320;
+      const uint8_t b = srcRow[sx * 3 + 0];
+      const uint8_t g = srcRow[sx * 3 + 1];
+      const uint8_t r = srcRow[sx * 3 + 2];
+      dstRow[x] = uint16_t(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
+    }
+    fwrite(dstRow, 2, 320, out);
+  }
+  free(srcRow);
+  fclose(in);
+  fclose(out);
+  return true;
+}
+
+bool decodeImageToRgb565File(const char *srcPath, const char *dstPath) {
+  if (!srcPath || !srcPath[0])
+    return false;
+  const char *dot = strrchr(srcPath, '.');
+  if (dot && !strcasecmp(dot, ".bmp"))
+    return decodeBmpToRgb565File(srcPath, dstPath);
+  return decodeJpegToRgb565File(srcPath, dstPath);
+}
+
+void drawGallery(const View &v) {
+  const bool vi = v.language == Language::Vietnamese;
+  drawHeader(vi ? "Ảnh (/image)" : "Photos (/image)", nullptr);
+  if (v.wallpaperPath[0]) {
+    fillRoundRectAA(236, 5, 76, 24, 6, C_RED);
+    drawTextCentered(vi ? "Xóa nền" : "Clear", 274, 7, 70, C_P_WHITE, 0.85f);
+  }
+
+  if (images.empty()) {
+    drawTextCentered(vi ? "Không có ảnh trong /image" : "No images in /image", 160, 108, 290, C_DIM);
+    drawTextCentered("JPG / BMP", 160, 134, 200, C_HINT);
+    return;
+  }
+
+  const int totalPages = (int(images.size()) + 3) / 4;
+  if (galleryPage >= totalPages)
+    galleryPage = totalPages - 1;
+  if (galleryPage < 0)
+    galleryPage = 0;
+
+  const int startIdx = galleryPage * 4;
+  const int endIdx = std::min<int>(int(images.size()), startIdx + 4);
+  for (int idx = startIdx; idx < endIdx; ++idx) {
+    const int row = idx - startIdx;
+    const int y = 42 + row * 40;
+    const bool isWall = (v.wallpaperPath[0] && images[idx] == v.wallpaperPath);
+    drawCardAA(12, y, 296, 34, 8, C_CARD, isWall ? C_TEAL : C_LINE);
+    const char *name = strrchr(images[idx].c_str(), '/');
+    name = name ? name + 1 : images[idx].c_str();
+    drawText(name, 22, y + 7, isWall ? 236 : 268, C_TEXT);
+    if (isWall)
+      fillCircleAA(292.0f, float(y + 17), 5.5f, C_TEAL);
+  }
+
+  if (totalPages > 1) {
+    drawCardAA(12, 206, 68, 28, 8, C_CARD, C_LINE);
+    drawTextCentered("<", 46, 210, 40, galleryPage > 0 ? C_TEXT : C_HINT);
+    char pageBuf[24];
+    snprintf(pageBuf, sizeof(pageBuf), "%d / %d", galleryPage + 1, totalPages);
+    drawTextCentered(pageBuf, 160, 210, 100, C_DIM);
+    drawCardAA(240, 206, 68, 28, 8, C_CARD, C_LINE);
+    drawTextCentered(">", 274, 210, 40, galleryPage + 1 < totalPages ? C_TEXT : C_HINT);
+  }
+}
+
+void drawPhotoView(const View &v) {
+  const bool vi = v.language == Language::Vietnamese;
+  if (!previewReady) {
+    drawTextCentered(vi ? "Không đọc được ảnh" : "Cannot decode image", 160, 100, 280, C_RED);
+  }
+  // Bottom action bar
+  drawCardAA(8, 202, 52, 32, 8, C_CARD, C_LINE);
+  drawBackChevronAA(30.0f, 212.0f, C_TEXT);
+
+  drawCardAA(66, 202, 42, 32, 8, C_CARD, C_LINE);
+  drawTextCentered("<", 87, 208, 30, C_TEXT);
+
+  fillRoundRectAA(114, 202, 150, 32, 8, C_TEAL);
+  drawTextCentered(vi ? "Đặt làm nền" : "Set Wallpaper", 189, 208, 144, C_BG);
+
+  drawCardAA(270, 202, 42, 32, 8, C_CARD, C_LINE);
+  drawTextCentered(">", 291, 208, 30, C_TEXT);
+}
+
+void drawSpeakerIconAA(float x, float y, uint16_t color) {
+  fillRect(int(x), int(y + 3), 3, 4, color);
+  drawLineAA(x + 3.0f, y + 3.0f, x + 6.5f, y + 0.5f, color, 0.75f);
+  drawLineAA(x + 3.0f, y + 7.0f, x + 6.5f, y + 9.5f, color, 0.75f);
+  drawLineAA(x + 6.5f, y + 0.5f, x + 6.5f, y + 9.5f, color, 0.85f);
+  drawArcSpanAA(x + 6.5f, y + 5.0f, 3.2f, 0.55f, 45.0f, 135.0f, color);
+}
+
+void drawVinylDiscAA(float cx, float cy, float r, float angleDeg) {
+  const int y0 = std::max(stripeY0, int(std::floor(cy - r - 1.0f)));
+  const int y1 = std::min(stripeY0 + 20, int(std::ceil(cy + r + 1.0f)) + 1);
+  if (y0 >= y1)
+    return;
+  const int x0 = std::max(0, int(std::floor(cx - r - 1.0f)));
+  const int x1 = std::min(320, int(std::ceil(cx + r + 1.0f)) + 1);
+  const uint16_t cDisc = rgb565(0x161c29);
+  const uint16_t cRim = rgb565(0x313e57);
+  const uint16_t cGroove = rgb565(0x0c101a);
+  const uint16_t cSheen = rgb565(0x3b4d6e);
+  constexpr float kRadToDeg = 57.2957795f;
+  for (int py = y0; py < y1; ++py) {
+    const float dy = float(py) - cy;
+    for (int px = x0; px < x1; ++px) {
+      const float dx = float(px) - cx;
+      const float d = std::sqrt(dx * dx + dy * dy);
+      const uint8_t alpha = coverageAlpha(d - r);
+      if (alpha == 0)
+        continue;
+      uint16_t col;
+      if (d <= 3.0f) {
+        col = C_P_BG;
+      } else if (d <= 12.0f) {
+        const uint8_t gt = static_cast<uint8_t>(std::clamp((dx + 12.0f) * 255.0f / 24.0f, 0.0f, 255.0f));
+        col = blend565(C_CYAN, C_VIOLET, gt);
+      } else if (d >= r - 1.2f) {
+        col = cRim;
+      } else {
+        col = cDisc;
+        if (std::abs(d - 16.5f) < 0.7f || std::abs(d - 21.5f) < 0.7f || std::abs(d - 26.5f) < 0.7f)
+          col = cGroove;
+        float deg = std::atan2(dx, -dy) * kRadToDeg - angleDeg;
+        while (deg < 0.0f)
+          deg += 360.0f;
+        while (deg >= 360.0f)
+          deg -= 360.0f;
+        if ((deg < 36.0f || (deg >= 180.0f && deg < 216.0f)) && d > 13.5f && d < r - 2.0f)
+          col = blend565(col, cSheen, 110);
+      }
+      putPixel(px, py, col, alpha);
+    }
+  }
+  const float rad = angleDeg * 0.0174532925f;
+  fillCircleAA(cx + std::sin(rad) * 7.5f, cy - std::cos(rad) * 7.5f, 1.5f, C_P_WHITE);
+}
+
+void drawTextMarquee(const char *s, int x, int y, int width, uint16_t color, float scale, int scrollPx) {
+  const int textW = measureText(s, scale);
+  if (textW <= width) {
+    drawTextCentered(s, x + width / 2, y, width, color, scale);
+    return;
+  }
+  const int gap = 28;
+  const int cycle = textW + gap;
+  const int offset = scrollPx % cycle;
+  const int lineH = int(std::round(20.0f * scale));
+  const int gy0 = std::max(stripeY0, y);
+  const int gy1 = std::min(stripeY0 + 20, y + lineH);
+  if (gy0 >= gy1)
+    return;
+  const int clipL = x;
+  const int clipR = x + width;
+  for (int pass = 0; pass < 2; ++pass) {
+    float fxPos = float(x - offset + pass * cycle);
+    const char *p = s;
+    while (*p) {
+      uint32_t code = nextCode(p);
+      const Glyph *glyph = findGlyph(code);
+      const float adv = float(glyph->advance) * scale;
+      const int drawX = int(std::round(fxPos));
+      const int gw = int(std::ceil(16.0f * scale));
+      if (drawX + gw > clipL && drawX < clipR) {
+        if (std::abs(scale - 1.0f) < 0.01f) {
+          for (int py = gy0; py < gy1; ++py) {
+            const uint16_t rowBits = glyph->rows[py - y];
+            for (int px = 0; px < 16; ++px) {
+              const int sx = drawX + px;
+              if (sx >= clipL && sx < clipR && (rowBits & (0x8000 >> px)))
+                putPixel(sx, py, color);
+            }
+          }
+        } else {
+          const float invScale = 1.0f / scale;
+          for (int py = gy0; py < gy1; ++py) {
+            const float fy = (float(py - y) + 0.5f) * invScale - 0.5f;
+            const int iy = int(std::floor(fy));
+            const float ty = fy - float(iy);
+            for (int px = 0; px < gw; ++px) {
+              const int sx = drawX + px;
+              if (sx < clipL || sx >= clipR)
+                continue;
+              const float fx = (float(px) + 0.5f) * invScale - 0.5f;
+              const int ix = int(std::floor(fx));
+              const float tx = fx - float(ix);
+              const float c00 = sampleGlyph(glyph, ix, iy);
+              const float c10 = sampleGlyph(glyph, ix + 1, iy);
+              const float c01 = sampleGlyph(glyph, ix, iy + 1);
+              const float c11 = sampleGlyph(glyph, ix + 1, iy + 1);
+              float cov = (c00 * (1.0f - tx) + c10 * tx) * (1.0f - ty) +
+                          (c01 * (1.0f - tx) + c11 * tx) * ty;
+              cov = std::clamp(cov * 1.65f, 0.0f, 1.0f);
+              if (cov > 0.02f)
+                putPixel(sx, py, color, static_cast<uint8_t>(cov * 255.0f));
+            }
+          }
+        }
+      }
+      fxPos += adv;
+      if (fxPos >= float(clipR))
+        break;
+    }
+  }
+}
+
 void drawMusicPlayer(const View &v) {
   const bool vi = v.language == Language::Vietnamese;
-
-  drawBackChevronAA(12.0f, 10.0f, C_TEXT);
-  drawText(vi ? "Nhạc" : "Music", 28, 5, 100, C_TEXT);
-  char volStr[16];
-  snprintf(volStr, sizeof(volStr), "Vol %d%%", std::clamp(v.volume, 0, 100));
-  drawTextRight(volStr, 308, 5, C_DIM);
-
-  drawCardAA(14, 34, 112, 112, 10, C_COVER, C_LINE);
-  drawNoteIconAA(70.0f, 90.0f, C_VIOLET, 2.0f);
-
-  const char *title = strrchr(v.title, '/');
-  drawText(title ? title + 1 : v.title, 138, 34, 172, C_TEXT, 1);
-  drawText(v.status, 138, 56, 172, C_DIM, 1);
-  drawText(v.lyric[0] ? v.lyric : (vi ? "Chưa có lời bài hát" : "No lyrics"),
-           138, 84, 172, v.lyric[0] ? C_AMBER : C_DIM, 3);
-
-  fillRoundRectAA(14, 156, 292, 5, 2, C_LINE);
-  if (v.total > 0) {
-    const int fillW = int(std::min<uint64_t>(292, uint64_t(v.ms) * 292 / v.total));
-    if (fillW > 0)
-      fillRoundRectAA(14, 156, fillW, 5, 2, C_VIOLET);
+  const int vol = std::clamp(v.volume, 0, 100);
+  const uint32_t animMs = uint32_t(esp_timer_get_time() / 1000ULL);
+  static float vinylAngle = 0.0f;
+  static uint32_t lastAnimMs = 0;
+  if (stripeY0 == 0) {
+    if (v.playing && lastAnimMs != 0 && animMs >= lastAnimMs) {
+      const uint32_t dt = std::min<uint32_t>(animMs - lastAnimMs, 250);
+      vinylAngle = std::fmod(vinylAngle + float(dt) * 0.06f, 360.0f);
+    }
+    lastAnimMs = animMs;
   }
+
+  // ================= 1. TOP BAR (320 x 32) =================
+  // Left: BACK Pill (8, 4, 70 x 24)
+  drawCardAA(8, 4, 70, 24, 12, C_P_PILL, C_P_PILL_BORDER);
+  drawLineAA(21.0f, 11.5f, 16.5f, 16.0f, C_P_CYAN_LT, 1.0f);
+  drawLineAA(16.5f, 16.0f, 21.0f, 20.5f, C_P_CYAN_LT, 1.0f);
+  drawText("BACK", 26, 7, 48, C_P_WHITE, 1, 0.85f);
+
+  // Center: Audio Waveform Pill (100, 4, 108 x 24) with 13 taller bars
+  drawCardAA(100, 4, 108, 24, 12, C_P_PILL, C_P_PILL_BORDER);
+  static const uint8_t topBaseH[13] = {5, 9, 14, 8, 13, 17, 11, 16, 9, 14, 7, 11, 6};
+  for (int i = 0; i < 13; ++i) {
+    int h = topBaseH[i];
+    if (v.playing) {
+      const int level = v.waveBins[(i * 17) / 12];
+      const int mod = 4 + ((level * topBaseH[i]) / 240);
+      h = std::clamp(mod, 4, 18);
+    } else {
+      h = std::max(3, topBaseH[i] / 3);
+    }
+    const int bx = 110 + i * 7;
+    const int by = 16 - h / 2;
+    fillRoundRectAA(bx, by, 4, h, 2, (i % 2 == 0) ? C_CYAN : C_VIOLET);
+  }
+
+  // Right: Volume Badge (236, 4, 76 x 24)
+  drawCardAA(236, 4, 76, 24, 12, C_P_BADGE_BG, C_P_BADGE_BORDER);
+  drawSpeakerIconAA(243.0f, 11.0f, C_P_CYAN_LT);
+  char volStr[12];
+  snprintf(volStr, sizeof(volStr), "%d%%", vol);
+  drawTextRight(volStr, 306, 6, C_P_CYAN_LT, 1.0f);
+
+  // Top Divider (y = 32)
+  fillRect(0, 32, 320, 1, C_P_DIV);
+
+  // ================= 2. MIDDLE: SONG INFO & REALTIME LYRICS =================
+  // Left Card: Song Info (8, 37, 120 x 121, r=12)
+  drawCardAA(8, 37, 120, 121, 12, C_P_CARD, C_P_CARD_BORDER);
+  drawVinylDiscAA(68.0f, 71.0f, 27.5f, vinylAngle);
+
+  // Extract clean song title & optional artist from filename ("Artist - Title.mp3")
+  const char *rawName = strrchr(v.title, '/');
+  rawName = rawName ? rawName + 1 : v.title;
+  char cleanName[192];
+  snprintf(cleanName, sizeof(cleanName), "%s", rawName);
+  if (char *q = strchr(cleanName, '?'))
+    *q = '\0';
+  if (char *dot = strrchr(cleanName, '.')) {
+    if (!strcasecmp(dot, ".mp3") || !strcasecmp(dot, ".wav"))
+      *dot = '\0';
+  }
+  const char *songTitle = cleanName;
+  const char *songArtist = v.status;
+  if (char *sep = strstr(cleanName, " - ")) {
+    *sep = '\0';
+    songArtist = cleanName;
+    songTitle = sep + 3;
+  }
+
+  const int marqueePx = v.playing ? int((animMs / 45) % 4096) : 0;
+  drawTextMarquee(songTitle[0] ? songTitle : "CYD MUSIC", 14, 105, 108, C_P_WHITE, 1.0f, marqueePx);
+  drawTextCentered(songArtist, 68, 130, 108, C_P_SUB, 0.85f);
+
+  // Right Card: Active Lyric Only + Larger Visualizer (134, 37, 178 x 121, r=12)
+  drawCardAA(134, 37, 178, 121, 12, C_P_CARD, C_P_CARD_BORDER);
+  if (v.lyric[0] != '\0') {
+    drawTextWrapped(v.lyric, 142, 45, 162, C_P_CYAN_LT, 3, 1.0f);
+  } else {
+    drawTextCentered(vi ? "Chưa có lời bài hát" : "No lyrics", 223, 66, 162, C_P_LYR_PREV, 1.0f);
+  }
+
+  // Bottom 18-bar Larger Waveform inside Lyrics Card (y = 115..153, bottom-aligned)
+  static const uint8_t lyrBaseH[18] = {10, 16, 24, 18, 28, 34, 22, 32, 26, 34, 24, 30, 18, 26, 16, 22, 14, 10};
+  for (int i = 0; i < 18; ++i) {
+    int h = lyrBaseH[i];
+    if (v.playing) {
+      const int level = v.waveBins[i];
+      h = std::clamp(4 + ((level * lyrBaseH[i]) / 220), 4, 36);
+    } else {
+      h = std::max(4, lyrBaseH[i] / 4);
+    }
+    const int bx = 144 + i * 9;
+    const int by = 153 - h;
+    const bool isPurple = (i % 3 == 2);
+    fillRoundRectAA(bx, by, 5, h, 2, isPurple ? C_VIOLET : C_CYAN);
+  }
+
+  // ================= 3. TIMELINE SECTION (y = 162..186) =================
   char posStr[16], durStr[16];
-  snprintf(posStr, sizeof(posStr), "%lu:%02lu", (unsigned long)(v.ms / 60000),
+  snprintf(posStr, sizeof(posStr), "%02lu:%02lu", (unsigned long)(v.ms / 60000),
            (unsigned long)(v.ms / 1000 % 60));
   if (v.total)
-    snprintf(durStr, sizeof(durStr), "%lu:%02lu", (unsigned long)(v.total / 60000),
+    snprintf(durStr, sizeof(durStr), "%02lu:%02lu", (unsigned long)(v.total / 60000),
              (unsigned long)(v.total / 1000 % 60));
   else
     snprintf(durStr, sizeof(durStr), "--:--");
-  drawText(posStr, 14, 166, 80, C_DIM);
-  drawTextRight(durStr, 306, 166, C_DIM);
 
-  const float cy = 207.0f;
-  drawTextCentered("-", 38, 197, 24, C_DIM);
-  drawPlayTriangleAA(99.0f, cy, 10.0f, 7.0f, C_TEXT, false);
-  fillRect(89, int(cy - 7), 2, 15, C_TEXT);
+  drawText(posStr, 8, 164, 48, C_P_WHITE, 1, 1.0f);
+  drawTextRight(durStr, 312, 164, C_P_SUB, 1.0f);
 
-  fillCircleAA(160.0f, cy, 21.0f, C_VIOLET);
+  const int barX = 58, barY = 171, barW = 204, barH = 6;
+  fillRoundRectAA(barX, barY, barW, barH, 3, C_P_TRACK);
+  int fillW = 0;
+  if (v.total > 0) {
+    fillW = int(std::min<uint64_t>(barW, uint64_t(v.ms) * barW / v.total));
+    if (fillW > 0)
+      fillRoundRectAA(barX, barY, fillW, barH, 3, C_CYAN);
+  }
+  const float thumbX = float(barX + fillW);
+  fillCircleAA(thumbX, float(barY + 3), 6.0f, C_CYAN);
+  fillCircleAA(thumbX, float(barY + 3), 4.2f, C_P_WHITE);
+
+  // ================= 4. BOTTOM CONTROL DECK (y = 187..240) =================
+  const float cy = 211.0f;
+
+  // Left Cluster: VOL- / VOL Progress / VOL+ Pill (12, 193, 112 x 36, r=18)
+  drawCardAA(12, 193, 112, 36, 18, C_P_PILL, C_P_PILL_BORDER);
+
+  // V- Button (cx=30, cy=211, r=14)
+  drawCircleButtonAA(30.0f, cy, 14.0f, C_P_BTN, C_P_BTN_BORDER);
+  drawTextCentered("V-", 30, 202, 26, C_P_WHITE, 0.85f);
+
+  // VOL Label + Progress Bar (cx=68)
+  drawTextCentered("VOL", 68, 196, 36, C_P_SUB, 0.72f);
+  fillRoundRectAA(50, 215, 36, 6, 3, C_P_TRACK);
+  const int volFillW = (36 * vol) / 100;
+  if (volFillW > 0)
+    fillRoundRectAA(50, 215, volFillW, 6, 3, C_CYAN);
+
+  // V+ Button (cx=106, cy=211, r=14)
+  drawCircleButtonAA(106.0f, cy, 14.0f, C_P_BTN, C_P_BTN_BORDER);
+  drawTextCentered("V+", 106, 202, 26, C_P_WHITE, 0.85f);
+
+  // Right Cluster: PREV / PLAY-PAUSE / NEXT (right edge 308)
+  // Prev Button (cx=182, cy=211, r=18)
+  drawCircleButtonAA(182.0f, cy, 18.0f, C_P_BTN, C_P_BTN_BORDER);
+  drawPlayTriangleAA(184.0f, cy, 8.5f, 6.0f, C_P_WHITE, false);
+  fillRect(175, int(cy - 6), 2, 13, C_P_WHITE);
+
+  // Play / Pause Pill Gradient (208, 193, 56 x 36, r=18)
+  fillRoundRectGradientAA(208, 193, 56, 36, 18, C_CYAN, C_VIOLET);
   if (v.playing) {
-    fillRoundRectAA(153, int(cy - 8), 5, 16, 1, C_BG);
-    fillRoundRectAA(162, int(cy - 8), 5, 16, 1, C_BG);
+    fillRoundRectAA(229, int(cy - 7), 4, 15, 1, C_P_BG);
+    fillRoundRectAA(239, int(cy - 7), 4, 15, 1, C_P_BG);
   } else {
-    drawPlayTriangleAA(161.0f, cy, 13.0f, 8.5f, C_BG, true);
+    drawPlayTriangleAA(237.0f, cy, 12.0f, 8.0f, C_P_BG, true);
   }
 
-  drawPlayTriangleAA(221.0f, cy, 10.0f, 7.0f, C_TEXT, true);
-  fillRect(229, int(cy - 7), 2, 15, C_TEXT);
-  drawTextCentered("+", 282, 197, 24, C_DIM);
+  // Next Button (cx=290, cy=211, r=18)
+  drawCircleButtonAA(290.0f, cy, 18.0f, C_P_BTN, C_P_BTN_BORDER);
+  drawPlayTriangleAA(288.0f, cy, 8.5f, 6.0f, C_P_WHITE, true);
+  fillRect(295, int(cy - 6), 2, 13, C_P_WHITE);
 }
 
 uint16_t touchRead(uint8_t c) {
@@ -1080,6 +1718,20 @@ void displayInit() {
 }
 
 void displayDraw(const View &v) {
+  FILE *bgFile = nullptr;
+  bool dimBg = false;
+  if (v.screen == Screen::PhotoView && previewReady) {
+    bgFile = fopen(kPreviewCache, "rb");
+  } else if (((v.screen == Screen::Standby && v.standbyMode == StandbyMode::ClockWeather) ||
+              v.screen == Screen::Menu) &&
+             v.wallpaperPath[0] != '\0') {
+    struct stat st = {};
+    if (stat(kWallpaperCache, &st) != 0)
+      decodeImageToRgb565File(v.wallpaperPath, kWallpaperCache);
+    bgFile = fopen(kWallpaperCache, "rb");
+    dimBg = true;
+  }
+
   uint8_t columns[] = {0, 0, 1, 63};
   command(0x2a, columns, 4);
   for (stripeY0 = 0; stripeY0 < 240; stripeY0 += 20) {
@@ -1087,8 +1739,16 @@ void displayDraw(const View &v) {
     command(0x2b, rows, 4);
     command(0x2c);
 
-    for (int i = 0; i < 320 * 20; ++i)
-      stripe[i] = C_BG;
+    const uint16_t bgColor = (v.screen == Screen::Player) ? C_P_BG : C_BG;
+    if (bgFile && fread(stripe, 2, 320 * 20, bgFile) == 320 * 20) {
+      if (dimBg) {
+        for (int i = 0; i < 320 * 20; ++i)
+          stripe[i] = blend565(stripe[i], C_BG, 95);
+      }
+    } else {
+      for (int i = 0; i < 320 * 20; ++i)
+        stripe[i] = bgColor;
+    }
 
     switch (v.screen) {
     case Screen::Standby:
@@ -1099,6 +1759,12 @@ void displayDraw(const View &v) {
       break;
     case Screen::Menu:
       drawMenu(v);
+      break;
+    case Screen::Gallery:
+      drawGallery(v);
+      break;
+    case Screen::PhotoView:
+      drawPhotoView(v);
       break;
     case Screen::Settings:
       drawSettings(v);
@@ -1124,6 +1790,8 @@ void displayDraw(const View &v) {
       stripe[i] = __builtin_bswap16(stripe[i]);
     tx(stripe, 320 * 20 * 2, true);
   }
+  if (bgFile)
+    fclose(bgFile);
 }
 
 void handleTap(int x, int y) {
@@ -1147,6 +1815,85 @@ void handleTap(int x, int y) {
       setScreen(Screen::Settings);
     else if (x >= 104 && x <= 180 && y >= 40 && y <= 136)
       setScreen(Screen::Player);
+    else if (x >= 188 && x <= 264 && y >= 40 && y <= 136)
+      setScreen(Screen::Gallery);
+    return;
+  }
+
+  if (cur == Screen::Gallery) {
+    if (x <= 120 && y <= 34) {
+      setScreen(Screen::Menu);
+      return;
+    }
+    if (x >= 232 && y <= 34) {
+      if (viewLock && xSemaphoreTake(viewLock, pdMS_TO_TICKS(50)) == pdTRUE) {
+        view.wallpaperPath[0] = '\0';
+        ++view.uiDirty;
+        xSemaphoreGive(viewLock);
+      }
+      servicesSaveWallpaper("");
+      remove(kWallpaperCache);
+      return;
+    }
+    if (y >= 42 && y < 202 && !images.empty()) {
+      const int row = (y - 42) / 40;
+      const int idx = galleryPage * 4 + row;
+      if (row >= 0 && row < 4 && idx < int(images.size())) {
+        photoIdx = idx;
+        previewReady = decodeImageToRgb565File(images[photoIdx].c_str(), kPreviewCache);
+        setScreen(Screen::PhotoView);
+      }
+      return;
+    }
+    if (y >= 204 && images.size() > 4) {
+      const int totalPages = (int(images.size()) + 3) / 4;
+      if (x < 90 && galleryPage > 0) {
+        --galleryPage;
+        if (viewLock && xSemaphoreTake(viewLock, pdMS_TO_TICKS(50)) == pdTRUE) {
+          ++view.uiDirty;
+          xSemaphoreGive(viewLock);
+        }
+      } else if (x > 230 && galleryPage + 1 < totalPages) {
+        ++galleryPage;
+        if (viewLock && xSemaphoreTake(viewLock, pdMS_TO_TICKS(50)) == pdTRUE) {
+          ++view.uiDirty;
+          xSemaphoreGive(viewLock);
+        }
+      }
+    }
+    return;
+  }
+
+  if (cur == Screen::PhotoView) {
+    if (y >= 198) {
+      if (x < 64) {
+        setScreen(Screen::Gallery);
+      } else if (x < 112 && !images.empty()) {
+        photoIdx = (photoIdx - 1 + int(images.size())) % int(images.size());
+        previewReady = decodeImageToRgb565File(images[photoIdx].c_str(), kPreviewCache);
+        if (viewLock && xSemaphoreTake(viewLock, pdMS_TO_TICKS(50)) == pdTRUE) {
+          ++view.uiDirty;
+          xSemaphoreGive(viewLock);
+        }
+      } else if (x < 268 && !images.empty() && previewReady) {
+        if (copyBinaryFile(kPreviewCache, kWallpaperCache)) {
+          servicesSaveWallpaper(images[photoIdx].c_str());
+          if (viewLock && xSemaphoreTake(viewLock, pdMS_TO_TICKS(50)) == pdTRUE) {
+            snprintf(view.wallpaperPath, sizeof(view.wallpaperPath), "%s", images[photoIdx].c_str());
+            view.screen = Screen::Standby;
+            ++view.uiDirty;
+            xSemaphoreGive(viewLock);
+          }
+        }
+      } else if (x >= 268 && !images.empty()) {
+        photoIdx = (photoIdx + 1) % int(images.size());
+        previewReady = decodeImageToRgb565File(images[photoIdx].c_str(), kPreviewCache);
+        if (viewLock && xSemaphoreTake(viewLock, pdMS_TO_TICKS(50)) == pdTRUE) {
+          ++view.uiDirty;
+          xSemaphoreGive(viewLock);
+        }
+      }
+    }
     return;
   }
 
@@ -1291,23 +2038,26 @@ void handleTap(int x, int y) {
   }
 
   if (cur == Screen::Player) {
-    if (x <= 120 && y <= 34) {
+    if (x <= 84 && y <= 36) {
       setScreen(Screen::Menu);
       return;
     }
-    if (y >= 182 && y <= 236) {
+    if (y >= 186 && y <= 240) {
       Command c;
-      if (x < 68)
+      bool valid = true;
+      if (x < 56)
         c = Command::Quieter;
-      else if (x < 130)
+      else if (x >= 80 && x < 140)
+        c = Command::Louder;
+      else if (x >= 156 && x < 204)
         c = Command::Previous;
-      else if (x < 190)
+      else if (x >= 204 && x < 268)
         c = Command::Toggle;
-      else if (x < 252)
+      else if (x >= 268)
         c = Command::Next;
       else
-        c = Command::Louder;
-      if (xQueueSend(commands, &c, 0) != pdTRUE)
+        valid = false;
+      if (valid && xQueueSend(commands, &c, 0) != pdTRUE)
         ESP_LOGW("touch", "Command dropped: queue full");
     }
   }

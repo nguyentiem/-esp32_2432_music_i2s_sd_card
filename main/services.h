@@ -35,6 +35,8 @@ WeatherInfo servicesGetWeather();
 // NVS persistence for user settings.
 void servicesLoadSettings(StandbyMode &mode, Language &lang);
 void servicesSaveSettings(StandbyMode mode, Language lang);
+void servicesLoadWallpaper(char *pathBuf, size_t bufSize);
+void servicesSaveWallpaper(const char *path);
 
 struct WifiApInfo {
   char ssid[33];

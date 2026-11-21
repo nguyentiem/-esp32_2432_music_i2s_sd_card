@@ -273,6 +273,31 @@ void servicesSaveSettings(StandbyMode mode, Language lang) {
   }
 }
 
+void servicesLoadWallpaper(char *pathBuf, size_t bufSize) {
+  if (!pathBuf || bufSize == 0)
+    return;
+  pathBuf[0] = '\0';
+  nvs_handle_t h;
+  if (nvs_open(kNvsNamespace, NVS_READONLY, &h) == ESP_OK) {
+    size_t len = bufSize;
+    if (nvs_get_str(h, "wallpaper", pathBuf, &len) != ESP_OK)
+      pathBuf[0] = '\0';
+    nvs_close(h);
+  }
+}
+
+void servicesSaveWallpaper(const char *path) {
+  nvs_handle_t h;
+  if (nvs_open(kNvsNamespace, NVS_READWRITE, &h) == ESP_OK) {
+    if (path && path[0])
+      nvs_set_str(h, "wallpaper", path);
+    else
+      nvs_erase_key(h, "wallpaper");
+    nvs_commit(h);
+    nvs_close(h);
+  }
+}
+
 namespace {
 SemaphoreHandle_t wifiScanLock = nullptr;
 std::vector<WifiApInfo> wifiScanResults;

@@ -22,6 +22,7 @@ QueueHandle_t commands;
 SemaphoreHandle_t viewLock;
 View view;
 std::vector<std::string> tracks;
+std::vector<std::string> images;
 namespace {
 void scanSD() {
   spi_bus_config_t bus = {};
@@ -121,6 +122,35 @@ void scanSD() {
     fclose(list);
   }
   ESP_LOGI("sd", "Found %u tracks/streams", unsigned(tracks.size()));
+
+  const char *imageRoot = "/sdcard/image";
+  DIR *imgDir = opendir(imageRoot);
+  if (imgDir) {
+    for (;;) {
+      auto *entry = readdir(imgDir);
+      if (!entry)
+        break;
+      if (images.size() >= 64)
+        break;
+      std::string name = entry->d_name, lower = name;
+      if (name.empty() || name[0] == '.')
+        continue;
+      std::transform(lower.begin(), lower.end(), lower.begin(),
+                     [](unsigned char c) { return std::tolower(c); });
+      const bool isJpg = (lower.size() >= 4 && !lower.compare(lower.size() - 4, 4, ".jpg")) ||
+                         (lower.size() >= 5 && !lower.compare(lower.size() - 5, 5, ".jpeg"));
+      const bool isBmp = (lower.size() >= 4 && !lower.compare(lower.size() - 4, 4, ".bmp"));
+      if (!isJpg && !isBmp)
+        continue;
+      std::string path = std::string(imageRoot) + "/" + name;
+      struct stat st = {};
+      if (stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode))
+        images.push_back(path);
+    }
+    closedir(imgDir);
+    std::sort(images.begin(), images.end());
+  }
+  ESP_LOGI("sd", "Found %u images in %s", unsigned(images.size()), imageRoot);
 }
 void wifiEvent(void *, esp_event_base_t base, int32_t id, void *data) {
   if (base == WIFI_EVENT && (id == WIFI_EVENT_STA_START || id == WIFI_EVENT_STA_DISCONNECTED)) {
@@ -186,12 +216,15 @@ void uiTask(void *) {
           xQueueSend(commands, &cmd, 0);
         }
       }
+      const bool animatePlayer = (copy.screen == Screen::Player && copy.playing);
       if (!lastDraw || copy.screen != previous.screen || copy.standbyMode != previous.standbyMode ||
           copy.language != previous.language || copy.wifiConnected != previous.wifiConnected ||
-          copy.uiDirty != previous.uiDirty || scanSeq != lastScanSeq ||
+          copy.uiDirty != previous.uiDirty || scanSeq != lastScanSeq || animatePlayer ||
+          strcmp(copy.wallpaperPath, previous.wallpaperPath) ||
           (copy.screen == Screen::Standby && copy.uiTick != previous.uiTick) ||
           strcmp(copy.title, previous.title) || strcmp(copy.status, previous.status) ||
-          strcmp(copy.lyric, previous.lyric) || copy.ms / 1000 != previous.ms / 1000 ||
+          strcmp(copy.lyricPrev, previous.lyricPrev) || strcmp(copy.lyric, previous.lyric) ||
+          strcmp(copy.lyricNext, previous.lyricNext) || copy.ms / 1000 != previous.ms / 1000 ||
           copy.total != previous.total || copy.volume != previous.volume ||
           copy.playing != previous.playing) {
         if (copy.screen != previous.screen)
@@ -221,6 +254,7 @@ extern "C" void app_main() {
   viewLock = xSemaphoreCreateMutex();
   ESP_ERROR_CHECK(commands && viewLock ? ESP_OK : ESP_ERR_NO_MEM);
   servicesLoadSettings(view.standbyMode, view.language);
+  servicesLoadWallpaper(view.wallpaperPath, sizeof(view.wallpaperPath));
   displayInit();
   scanSD();
   if (!strncmp(STREAM_URL, "http://", 7) && tracks.size() < MAX_TRACKS)

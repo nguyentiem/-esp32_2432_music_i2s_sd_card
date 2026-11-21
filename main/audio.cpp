@@ -44,6 +44,9 @@ class Player {
   Lyrics lyrics;
   int16_t output[OUTPUT_FRAMES * 2];
   size_t used = 0;
+  uint8_t waveBins[18] = {};
+  uint32_t wavePeak = 0;
+  uint32_t waveSamples = 0;
   std::unique_ptr<mp3dec_t> mp3;
   std::unique_ptr<int16_t[]> pcm;
   std::unique_ptr<uint8_t[]> input;
@@ -51,6 +54,10 @@ class Player {
     int64_t now = esp_timer_get_time();
     if (!force && now - lastPublish < 100000)
       return;
+    if (!playing || paused) {
+      for (uint8_t &b : waveBins)
+        b = (b * 3) / 5;
+    }
     View copy;
     snprintf(copy.title, sizeof(copy.title), "%s",
              tracks.empty() ? "SD /music or HTTP URL" : tracks[index].c_str());
@@ -60,12 +67,23 @@ class Player {
     copy.volume = volume;
     copy.playing = playing && !paused;
     int line = lyrics.index(copy.ms);
-    if (line >= 0)
+    if (line >= 0) {
       snprintf(copy.lyric, sizeof(copy.lyric), "%s", lyrics.lines[line].text.c_str());
+      if (line > 0)
+        snprintf(copy.lyricPrev, sizeof(copy.lyricPrev), "%s", lyrics.lines[line - 1].text.c_str());
+      if (line + 1 < static_cast<int>(lyrics.lines.size()))
+        snprintf(copy.lyricNext, sizeof(copy.lyricNext), "%s", lyrics.lines[line + 1].text.c_str());
+    } else if (!lyrics.lines.empty()) {
+      snprintf(copy.lyricNext, sizeof(copy.lyricNext), "%s", lyrics.lines[0].text.c_str());
+    }
+    memcpy(copy.waveBins, waveBins, sizeof(copy.waveBins));
     xSemaphoreTake(viewLock, portMAX_DELAY);
     memcpy(view.title, copy.title, sizeof(view.title));
+    memcpy(view.lyricPrev, copy.lyricPrev, sizeof(view.lyricPrev));
     memcpy(view.lyric, copy.lyric, sizeof(view.lyric));
+    memcpy(view.lyricNext, copy.lyricNext, sizeof(view.lyricNext));
     memcpy(view.status, copy.status, sizeof(view.status));
+    memcpy(view.waveBins, copy.waveBins, sizeof(view.waveBins));
     view.ms = copy.ms;
     view.total = copy.total;
     view.volume = copy.volume;
@@ -155,6 +173,16 @@ class Player {
       if (channels == 2)
         sample = (sample + data[i * channels + 1]) / 2;
       int16_t value = static_cast<int16_t>(sample * volume / 100);
+      uint32_t mag = static_cast<uint32_t>(sample < 0 ? -sample : sample);
+      if (mag > wavePeak)
+        wavePeak = mag;
+      if (++waveSamples >= 256) {
+        uint8_t level = static_cast<uint8_t>(std::min<uint32_t>(255, (wavePeak * 255) / 20000));
+        memmove(waveBins, waveBins + 1, sizeof(waveBins) - 1);
+        waveBins[sizeof(waveBins) - 1] = level;
+        wavePeak = 0;
+        waveSamples = 0;
+      }
       // Rational zero-order-hold resampling to a stable I2S clock.
       phase += OUTPUT_RATE;
       while (phase >= rate) {
